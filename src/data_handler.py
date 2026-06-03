@@ -1,43 +1,56 @@
 import pandas as pd
-import pdfplumber
 import os
 
-def load_any_file(file_path):
+def clean_junk_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Scans the dataframe to locate where the real headers reside,
+    removes top-level metadata lines, and resets columns properly.
+    """
+    target_keywords = {'name', 'job title', 'linkedin url', 'interests', 'skills'}
+    header_row_index = None
+
+    # Step 1: Scan rows to find the true column headers
+    for idx, row in df.iterrows():
+        # Convert row values to lowecase strings to perform safe matching
+        row_values = [str(val).strip().lower() for val in row.values]
+        
+        # Check if any target keyword matches the row items
+        if any(keyword in row_values for keyword in target_keywords):
+            header_row_index = idx
+            break
+
+    # Step 2: If header is found deep in the sheet, realign the dataframe
+    if header_row_index is not None and header_row_index > 0:
+        # Extract new headers from that specific row
+        new_headers = df.iloc[header_row_index].astype(str).str.strip().tolist()
+        
+        # Slice data from the row below the header onwards
+        df = df.iloc[header_row_index + 1 :].copy()
+        df.columns = new_headers
+        
+    # Step 3: Remove completely empty rows or columns that got imported accidentally
+    df = df.dropna(how='all')
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed:')] # Drop ghost columns
+    df = df.reset_index(drop=True)
+    
+    return df
+
+def load_any_file(file_path: str) -> pd.DataFrame:
+    """
+    Loads CSV or Excel datasets safely and triggers the cleaning pipeline automatically.
+    """
     if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Bhai, ye file nahi mili: {file_path}")
+        raise FileNotFoundError(f"File not found at: {file_path}")
 
     ext = os.path.splitext(file_path)[-1].lower()
-    
-    # 1. Excel handling
-    if ext in ['.xlsx', '.xls']:
-        print(f"📂 Excel file mil gayi: {file_path}")
-        return pd.read_excel(file_path)
-    
-    # 2. CSV handling
-    elif ext == '.csv':
-        return pd.read_csv(file_path)
-    
-    # 3. PDF handling
-    elif ext == '.pdf':
-        print(f"📄 PDF detect hui. Tables nikal raha hoon...")
-        all_data = []
-        with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
-                table = page.extract_table()
-                if table:
-                    df = pd.DataFrame(table[1:], columns=table[0])
-                    all_data.append(df)
-        if not all_data:
-            print("⚠️ PDF mein koi table nahi mili!")
-            return pd.DataFrame()
-        return pd.concat(all_data, ignore_index=True)
-    
-    else:
-        print(f"❌ '{ext}' format abhi supported nahi hai.")
-        return pd.DataFrame()
 
-if __name__ == "__main__":
-    # Test karne ke liye (Optional):
-    # df = load_any_file('data/recipients.csv')
-    # print(df.head())
-    pass
+    if ext == '.csv':
+        df = pd.read_csv(file_path)
+    elif ext in ['.xlsx', '.xls']:
+        df = pd.read_excel(file_path)
+    else:
+        raise ValueError("Unsupported format! Only CSV or Excel sheets are accepted.")
+
+    # Apply our smart cleaning function right after loading the file
+    cleaned_df = clean_junk_rows(df)
+    return cleaned_df
